@@ -266,7 +266,8 @@ probedevice(const char *ip, int port)
 	socklen_t len;
 	int err, fd, ret = -1;
 
-	if ((fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) < 0)
+	if ((fd = socket(AF_INET,
+	    SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) < 0)
 		return -1;
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
@@ -327,7 +328,9 @@ connectandroid(void)
 	struct sockaddr_in addr;
 	struct timeval tv;
 	struct pollfd pfd;
-	char *fwdargs[] = { "adb", "forward", ANDROID_FORWARD, ANDROID_ABSTRACT, NULL };
+	char *fwdargs[] = {
+	    "adb", "forward", ANDROID_FORWARD, ANDROID_ABSTRACT, NULL
+	};
 	char *pushargs[] = { "adb", "push", SCRCPY_LOCAL, SCRCPY_REMOTE, NULL };
 	char b;
 	int s;
@@ -362,7 +365,8 @@ connectandroid(void)
 		goto closeretry;
 	pfd.fd = s;
 	pfd.events = POLLIN;
-	if (poll(&pfd, 1, HANDSHAKE_TIMEOUT) > 0 && recv(s, &b, 1, MSG_PEEK) <= 0)
+	if (poll(&pfd, 1, HANDSHAKE_TIMEOUT) > 0 &&
+	    recv(s, &b, 1, MSG_PEEK) <= 0)
 		goto closeretry;
 	tv.tv_sec = SOCKET_TIMEOUT;
 	tv.tv_usec = 0;
@@ -472,7 +476,8 @@ handlepush(int srvfd)
 	setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 	len = 0;
 	while (len < sizeof(recvbuf)) {
-		if ((n = read(cfd, recvbuf + len, sizeof(recvbuf) - len)) <= 0) {
+		if ((n = read(cfd, recvbuf + len,
+		    sizeof(recvbuf) - len)) <= 0) {
 			if (n < 0 && errno == EINTR)
 				continue;
 			break;
@@ -549,7 +554,8 @@ rundaemon(const char *sockpath)
 	sigaction(SIGHUP, &sa, NULL);
 
 	unlink(sockpath);
-	if ((srvfd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) < 0)
+	if ((srvfd = socket(AF_UNIX,
+	    SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) < 0)
 		err(1, "socket");
 	memset(&saddr, 0, sizeof(saddr));
 	saddr.sun_family = AF_UNIX;
@@ -665,8 +671,8 @@ main(int argc, char *argv[])
 		usage();
 
 	if (argc == 1) {
-		if (snprintf(targetip, sizeof(targetip), "%s", argv[0]) >=
-		    (int)sizeof(targetip))
+		n = snprintf(targetip, sizeof(targetip), "%s", argv[0]);
+		if (n < 0 || (size_t)n >= sizeof(targetip))
 			usage();
 		if ((colon = strchr(targetip, ':'))) {
 			*colon = '\0';
