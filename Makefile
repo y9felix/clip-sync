@@ -14,10 +14,6 @@ all: $(PROG)
 
 $(OBJ): config.h
 
-config.h:
-	cp config.def.h $@
-	chmod 644 $@
-
 .c.o:
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
 	chmod 644 $@
@@ -31,6 +27,7 @@ clean:
 
 install: all
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
+	rm -f $(DESTDIR)$(PREFIX)/bin/$(PROG)
 	cp -f $(PROG) $(DESTDIR)$(PREFIX)/bin
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/$(PROG)
 
