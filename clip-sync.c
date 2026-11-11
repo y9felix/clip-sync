@@ -66,12 +66,12 @@ static uint64_t androidretry;
 static uint64_t lasthash;
 static uint64_t pasteretry;
 static int androidfd = -1;
-static int backoff;
+static int backoff = BACKOFF_INIT;
 static int scrcpypushed;
 static int scrcpytries;
 static int targetport = DEFAULT_PORT;
 static char targetip[64] = DEFAULT_HOST;
-static char *argv0;
+static char *argv0 = "clip-sync";
 static char recvbuf[CLIP_MAX + 1];
 
 static void
@@ -102,6 +102,7 @@ reapchildren(void)
 			pasteretry = monoms() + BACKOFF_INIT;
 		} else if (ch == scrcpypid) {
 			scrcpypid = -1;
+			disconnectandroid();
 		}
 	}
 }
@@ -142,7 +143,7 @@ writeall(int fd, const void *buf, size_t len)
 	ssize_t n;
 
 	p = buf;
-	while (len > 0) {
+	while (len) {
 		if ((n = write(fd, p, len)) <= 0) {
 			if (n < 0 && errno == EINTR)
 				continue;
@@ -161,7 +162,7 @@ readexact(int fd, void *buf, size_t len)
 	ssize_t n;
 
 	p = buf;
-	while (len > 0) {
+	while (len) {
 		if ((n = read(fd, p, len)) <= 0) {
 			if (n < 0 && errno == EINTR)
 				continue;
@@ -263,7 +264,7 @@ probedevice(const char *ip, int port)
 	struct sockaddr_in addr;
 	struct pollfd pfd;
 	socklen_t len;
-	int err, fd;
+	int err, fd, ret = -1;
 
 	if ((fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) < 0)
 		return -1;
@@ -284,11 +285,10 @@ probedevice(const char *ip, int port)
 		    err)
 			goto closefd;
 	}
-	close(fd);
-	return 0;
+	ret = 0;
 closefd:
 	close(fd);
-	return -1;
+	return ret;
 }
 
 static int
@@ -498,7 +498,7 @@ handleandroid(void)
 	uint32_t netlen, rlen;
 	uint8_t type;
 
-	if (readexact(androidfd, &type, 1) < 0)
+	if (readexact(androidfd, &type, sizeof(type)) < 0)
 		goto disconnect;
 	switch (type) {
 	case MSG_CLIPBOARD:
@@ -627,9 +627,10 @@ main(int argc, char *argv[])
 	char *colon, *end;
 	char sockpath[sizeof(un.sun_path)];
 	long val;
-	int ch, push = 0;
+	int ch, n, push = 0;
 
-	argv0 = argv[0];
+	if (argc && argv[0])
+		argv0 = argv[0];
 	while ((ch = getopt(argc, argv, "pv")) != -1) {
 		switch (ch) {
 		case 'p':
@@ -647,11 +648,13 @@ main(int argc, char *argv[])
 
 	runtimedir = getenv("XDG_RUNTIME_DIR");
 	if (runtimedir && *runtimedir)
-		snprintf(sockpath, sizeof(sockpath), "%s/%s",
+		n = snprintf(sockpath, sizeof(sockpath), "%s/%s",
 		    runtimedir, SOCK_NAME);
 	else
-		snprintf(sockpath, sizeof(sockpath),
+		n = snprintf(sockpath, sizeof(sockpath),
 		    FALLBACK_SOCK, (unsigned int)getuid());
+	if (n < 0 || (size_t)n >= sizeof(sockpath))
+		errx(1, "socket path too long");
 
 	if (push) {
 		if (argc)
