@@ -22,11 +22,7 @@
 #include "config.h"
 
 #define ANDROID_ABSTRACT "localabstract:scrcpy_" SCRCPY_SCID
-#define SCRCPY_CMD \
-    "CLASSPATH=" SCRCPY_REMOTE " app_process / com.genymobile.scrcpy.Server " \
-    SCRCPY_VER " scid=" SCRCPY_SCID \
-    " video=false audio=false control=true tunnel_forward=true" \
-    " send_device_meta=false send_dummy_byte=false cleanup=false"
+#define SCRCPY_CMD "CLASSPATH=" SCRCPY_REMOTE " app_process / com.genymobile.scrcpy.Server " SCRCPY_VER " scid=" SCRCPY_SCID " video=false audio=false control=true tunnel_forward=true send_device_meta=false send_dummy_byte=false cleanup=false"
 
 enum {
 	MSG_CLIPBOARD,
@@ -266,8 +262,7 @@ probedevice(const char *ip, int port)
 	socklen_t len;
 	int err, fd, ret = -1;
 
-	if ((fd = socket(AF_INET,
-	    SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) < 0)
+	if ((fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) < 0)
 		return -1;
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
@@ -281,9 +276,7 @@ probedevice(const char *ip, int port)
 		pfd.events = POLLOUT;
 		err = 0;
 		len = sizeof(err);
-		if (poll(&pfd, 1, PROBE_TIMEOUT) <= 0 ||
-		    getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 ||
-		    err)
+		if (poll(&pfd, 1, PROBE_TIMEOUT) <= 0 || getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err)
 			goto closefd;
 	}
 	ret = 0;
@@ -328,9 +321,7 @@ connectandroid(void)
 	struct sockaddr_in addr;
 	struct timeval tv;
 	struct pollfd pfd;
-	char *fwdargs[] = {
-	    "adb", "forward", ANDROID_FORWARD, ANDROID_ABSTRACT, NULL
-	};
+	char *fwdargs[] = { "adb", "forward", ANDROID_FORWARD, ANDROID_ABSTRACT, NULL };
 	char *pushargs[] = { "adb", "push", SCRCPY_LOCAL, SCRCPY_REMOTE, NULL };
 	char b;
 	int s;
@@ -365,8 +356,7 @@ connectandroid(void)
 		goto closeretry;
 	pfd.fd = s;
 	pfd.events = POLLIN;
-	if (poll(&pfd, 1, HANDSHAKE_TIMEOUT) > 0 &&
-	    recv(s, &b, 1, MSG_PEEK) <= 0)
+	if (poll(&pfd, 1, HANDSHAKE_TIMEOUT) > 0 && recv(s, &b, 1, MSG_PEEK) <= 0)
 		goto closeretry;
 	tv.tv_sec = SOCKET_TIMEOUT;
 	tv.tv_usec = 0;
@@ -400,8 +390,7 @@ sendandroid(const char *text, size_t len)
 	hdr[0] = MSG_SET_CLIPBOARD;
 	nlen = htonl((uint32_t)len);
 	memcpy(hdr + 10, &nlen, sizeof(nlen));
-	if (writeall(androidfd, hdr, sizeof(hdr)) < 0 ||
-	    writeall(androidfd, text, len) < 0)
+	if (writeall(androidfd, hdr, sizeof(hdr)) < 0 || writeall(androidfd, text, len) < 0)
 		return -1;
 	return 0;
 }
@@ -476,8 +465,7 @@ handlepush(int srvfd)
 	setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 	len = 0;
 	while (len < sizeof(recvbuf)) {
-		if ((n = read(cfd, recvbuf + len,
-		    sizeof(recvbuf) - len)) <= 0) {
+		if ((n = read(cfd, recvbuf + len, sizeof(recvbuf) - len)) <= 0) {
 			if (n < 0 && errno == EINTR)
 				continue;
 			break;
@@ -554,8 +542,7 @@ rundaemon(const char *sockpath)
 	sigaction(SIGHUP, &sa, NULL);
 
 	unlink(sockpath);
-	if ((srvfd = socket(AF_UNIX,
-	    SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) < 0)
+	if ((srvfd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) < 0)
 		err(1, "socket");
 	memset(&saddr, 0, sizeof(saddr));
 	saddr.sun_family = AF_UNIX;
@@ -597,11 +584,9 @@ rundaemon(const char *sockpath)
 
 		timeout = -1;
 		if (androidfd < 0)
-			timeout = (now >= androidretry) ? 0 :
-			    (int)(androidretry - now);
+			timeout = (now >= androidretry) ? 0 : (int)(androidretry - now);
 		if (pastepid < 0) {
-			t = (now >= pasteretry) ? 0 :
-			    (int)(pasteretry - now);
+			t = (now >= pasteretry) ? 0 : (int)(pasteretry - now);
 			timeout = (timeout < 0) ? t : min(timeout, t);
 		}
 
@@ -613,8 +598,7 @@ rundaemon(const char *sockpath)
 
 		if (fds[0].revents & POLLIN)
 			handlepush(srvfd);
-		if (androidfd >= 0 &&
-		    (fds[1].revents & (POLLIN | POLLHUP | POLLERR)))
+		if (androidfd >= 0 && (fds[1].revents & (POLLIN | POLLHUP | POLLERR)))
 			handleandroid();
 	}
 
@@ -654,11 +638,9 @@ main(int argc, char *argv[])
 
 	runtimedir = getenv("XDG_RUNTIME_DIR");
 	if (runtimedir && *runtimedir)
-		n = snprintf(sockpath, sizeof(sockpath), "%s/%s",
-		    runtimedir, SOCK_NAME);
+		n = snprintf(sockpath, sizeof(sockpath), "%s/%s", runtimedir, SOCK_NAME);
 	else
-		n = snprintf(sockpath, sizeof(sockpath),
-		    FALLBACK_SOCK, (unsigned int)getuid());
+		n = snprintf(sockpath, sizeof(sockpath), FALLBACK_SOCK, (unsigned int)getuid());
 	if (n < 0 || (size_t)n >= sizeof(sockpath))
 		errx(1, "socket path too long");
 
@@ -678,8 +660,7 @@ main(int argc, char *argv[])
 			*colon = '\0';
 			errno = 0;
 			val = strtol(colon + 1, &end, 10);
-			if (errno || end == colon + 1 || *end ||
-			    val <= 0 || val > 65535)
+			if (errno || end == colon + 1 || *end || val <= 0 || val > 65535)
 				usage();
 			targetport = (int)val;
 		}
