@@ -1,5 +1,5 @@
 #define CLIP_MAX          1048576
-#define DEFAULT_HOST      "192.168.0.123"
+#define DEFAULT_HOST      "192.168.1.100"
 #define DEFAULT_PORT      5555
 #define ANDROID_PORT      28888
 #define ANDROID_FORWARD   "tcp:28888"

@@ -1,5 +1,5 @@
 PROG = clip-sync
-VERSION = 1.0
+VERSION = 1.0.0
 PREFIX = /usr/local
 
 CC = cc
@@ -13,6 +13,9 @@ OBJ = $(SRC:.c=.o)
 all: $(PROG)
 
 $(OBJ): config.h
+
+config.h:
+	cp config.def.h $@
 
 .c.o:
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
