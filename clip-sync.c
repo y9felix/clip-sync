@@ -30,30 +30,6 @@ enum {
 	MSG_SET_CLIPBOARD = 9
 };
 
-static void usage(void);
-static void sighandler(int sig);
-static void reapchildren(void);
-static uint64_t monoms(void);
-static int min(int a, int b);
-static uint64_t fnv1a(const char *s, size_t len);
-static int writeall(int fd, const void *buf, size_t len);
-static int readexact(int fd, void *buf, size_t len);
-static pid_t spawn(char *const argv[]);
-static int runcmd(char *const argv[]);
-static void killwait(pid_t *pid);
-static void startpaste(void);
-static void spawnscrcpy(void);
-static int probedevice(const char *ip, int port);
-static int ensureadb(void);
-static void disconnectandroid(void);
-static int connectandroid(void);
-static int sendandroid(const char *text, size_t len);
-static void wlcopy(const char *data, size_t len);
-static int runpush(const char *sockpath);
-static void handlepush(int srvfd);
-static void handleandroid(void);
-static int rundaemon(const char *sockpath);
-
 static volatile sig_atomic_t running = 1;
 static volatile sig_atomic_t sigchld;
 static pid_t pastepid = -1;
@@ -70,37 +46,10 @@ static char targetip[64] = DEFAULT_HOST;
 static char *argv0 = "clip-sync";
 static char recvbuf[CLIP_MAX + 1];
 
-static void
-usage(void)
+static int
+min(int a, int b)
 {
-	fprintf(stderr, "usage: %s [-p] [-v] [ip[:port]]\n", argv0);
-	exit(1);
-}
-
-static void
-sighandler(int sig)
-{
-	if (sig == SIGCHLD)
-		sigchld = 1;
-	else
-		running = 0;
-}
-
-static void
-reapchildren(void)
-{
-	int st;
-	pid_t ch;
-
-	while ((ch = waitpid(-1, &st, WNOHANG)) > 0) {
-		if (ch == pastepid) {
-			pastepid = -1;
-			pasteretry = monoms() + BACKOFF_INIT;
-		} else if (ch == scrcpypid) {
-			scrcpypid = -1;
-			disconnectandroid();
-		}
-	}
+	return (a < b) ? a : b;
 }
 
 static uint64_t
@@ -110,12 +59,6 @@ monoms(void)
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
-}
-
-static int
-min(int a, int b)
-{
-	return (a < b) ? a : b;
 }
 
 static uint64_t
@@ -140,11 +83,10 @@ writeall(int fd, const void *buf, size_t len)
 
 	p = buf;
 	while (len) {
-		if ((n = write(fd, p, len)) <= 0) {
-			if (n < 0 && errno == EINTR)
-				continue;
+		if ((n = write(fd, p, len)) < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
 			return -1;
-		}
 		p += n;
 		len -= (size_t)n;
 	}
@@ -159,11 +101,10 @@ readexact(int fd, void *buf, size_t len)
 
 	p = buf;
 	while (len) {
-		if ((n = read(fd, p, len)) <= 0) {
-			if (n < 0 && errno == EINTR)
-				continue;
+		if ((n = read(fd, p, len)) < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
 			return -1;
-		}
 		p += n;
 		len -= (size_t)n;
 	}
@@ -176,19 +117,18 @@ spawn(char *const argv[])
 	int devnull;
 	pid_t pid;
 
-	if (!(pid = fork())) {
-		signal(SIGPIPE, SIG_DFL);
-		if ((devnull = open("/dev/null", O_RDWR)) >= 0) {
-			dup2(devnull, 0);
-			dup2(devnull, 1);
-			dup2(devnull, 2);
-			if (devnull > 2)
-				close(devnull);
-		}
-		execvp(argv[0], argv);
-		_exit(127);
+	if ((pid = fork()))
+		return pid;
+	signal(SIGPIPE, SIG_DFL);
+	if ((devnull = open("/dev/null", O_RDWR)) >= 0) {
+		dup2(devnull, 0);
+		dup2(devnull, 1);
+		dup2(devnull, 2);
+		if (devnull > 2)
+			close(devnull);
 	}
-	return pid;
+	execvp(argv[0], argv);
+	_exit(127);
 }
 
 static int
@@ -208,14 +148,15 @@ runcmd(char *const argv[])
 static void
 killwait(pid_t *pid)
 {
-	int i, st;
+	pid_t ch;
+	int i;
 
 	if (*pid <= 0)
 		return;
 	kill(*pid, SIGTERM);
 	for (i = 0; i < 10; i++) {
-		st = waitpid(*pid, NULL, WNOHANG);
-		if (st > 0 || (st < 0 && errno == ECHILD)) {
+		ch = waitpid(*pid, NULL, WNOHANG);
+		if (ch > 0 || (ch < 0 && errno == ECHILD)) {
 			*pid = -1;
 			return;
 		}
@@ -226,6 +167,45 @@ killwait(pid_t *pid)
 		if (errno != EINTR)
 			break;
 	*pid = -1;
+}
+
+static void
+disconnectandroid(void)
+{
+	if (androidfd >= 0) {
+		close(androidfd);
+		androidfd = -1;
+	}
+	killwait(&scrcpypid);
+	scrcpytries = 0;
+	lasthash = 0;
+	androidretry = monoms() + (uint64_t)backoff;
+	backoff = min(backoff * 2, BACKOFF_MAX);
+}
+
+static void
+reapchildren(void)
+{
+	pid_t ch;
+
+	while ((ch = waitpid(-1, NULL, WNOHANG)) > 0) {
+		if (ch == pastepid) {
+			pastepid = -1;
+			pasteretry = monoms() + BACKOFF_INIT;
+		} else if (ch == scrcpypid) {
+			scrcpypid = -1;
+			disconnectandroid();
+		}
+	}
+}
+
+static void
+sighandler(int sig)
+{
+	if (sig == SIGCHLD)
+		sigchld = 1;
+	else
+		running = 0;
 }
 
 static void
@@ -268,19 +248,21 @@ probedevice(const char *ip, int port)
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons((uint16_t)port);
 	if (inet_pton(AF_INET, ip, &addr.sin_addr) <= 0)
-		goto closefd;
+		goto close_fd;
 	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		if (errno != EINPROGRESS)
-			goto closefd;
+			goto close_fd;
 		pfd.fd = fd;
 		pfd.events = POLLOUT;
 		err = 0;
 		len = sizeof(err);
-		if (poll(&pfd, 1, PROBE_TIMEOUT) <= 0 || getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err)
-			goto closefd;
+		if (poll(&pfd, 1, PROBE_TIMEOUT) <= 0)
+			goto close_fd;
+		if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) < 0 || err)
+			goto close_fd;
 	}
 	ret = 0;
-closefd:
+close_fd:
 	close(fd);
 	return ret;
 }
@@ -301,20 +283,6 @@ ensureadb(void)
 	return runcmd(args);
 }
 
-static void
-disconnectandroid(void)
-{
-	if (androidfd >= 0) {
-		close(androidfd);
-		androidfd = -1;
-	}
-	killwait(&scrcpypid);
-	scrcpytries = 0;
-	lasthash = 0;
-	androidretry = monoms() + (uint64_t)backoff;
-	backoff = min(backoff * 2, BACKOFF_MAX);
-}
-
 static int
 connectandroid(void)
 {
@@ -331,13 +299,11 @@ connectandroid(void)
 			disconnectandroid();
 			return -1;
 		}
-		if (!scrcpypushed) {
-			if (runcmd(pushargs) < 0) {
-				disconnectandroid();
-				return -1;
-			}
-			scrcpypushed = 1;
+		if (!scrcpypushed && runcmd(pushargs) < 0) {
+			disconnectandroid();
+			return -1;
 		}
+		scrcpypushed = 1;
 		runcmd(fwdargs);
 		spawnscrcpy();
 		scrcpytries = 0;
@@ -353,11 +319,11 @@ connectandroid(void)
 		return -1;
 	}
 	if (connect(s, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-		goto closeretry;
+		goto close_retry;
 	pfd.fd = s;
 	pfd.events = POLLIN;
 	if (poll(&pfd, 1, HANDSHAKE_TIMEOUT) > 0 && recv(s, &b, 1, MSG_PEEK) <= 0)
-		goto closeretry;
+		goto close_retry;
 	tv.tv_sec = SOCKET_TIMEOUT;
 	tv.tv_usec = 0;
 	setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -367,7 +333,7 @@ connectandroid(void)
 	androidretry = 0;
 	scrcpytries = 0;
 	return 0;
-closeretry:
+close_retry:
 	close(s);
 	if (++scrcpytries >= CONNECT_RETRIES) {
 		scrcpypushed = 0;
@@ -390,7 +356,9 @@ sendandroid(const char *text, size_t len)
 	hdr[0] = MSG_SET_CLIPBOARD;
 	nlen = htonl((uint32_t)len);
 	memcpy(hdr + 10, &nlen, sizeof(nlen));
-	if (writeall(androidfd, hdr, sizeof(hdr)) < 0 || writeall(androidfd, text, len) < 0)
+	if (writeall(androidfd, hdr, sizeof(hdr)) < 0)
+		return -1;
+	if (writeall(androidfd, text, len) < 0)
 		return -1;
 	return 0;
 }
@@ -415,40 +383,6 @@ wlcopy(const char *data, size_t len)
 	close(p[1]);
 }
 
-static int
-runpush(const char *sockpath)
-{
-	struct sockaddr_un addr;
-	char buf[8192];
-	ssize_t n;
-	int fd, ret = 0;
-
-	if ((fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0)
-		return -1;
-	memset(&addr, 0, sizeof(addr));
-	addr.sun_family = AF_UNIX;
-	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sockpath);
-	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-		close(fd);
-		return -1;
-	}
-	for (;;) {
-		if ((n = read(0, buf, sizeof(buf))) <= 0) {
-			if (n < 0 && errno == EINTR)
-				continue;
-			if (n < 0)
-				ret = -1;
-			break;
-		}
-		if (writeall(fd, buf, (size_t)n) < 0) {
-			ret = -1;
-			break;
-		}
-	}
-	close(fd);
-	return ret;
-}
-
 static void
 handlepush(int srvfd)
 {
@@ -465,23 +399,22 @@ handlepush(int srvfd)
 	setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 	len = 0;
 	while (len < sizeof(recvbuf)) {
-		if ((n = read(cfd, recvbuf + len, sizeof(recvbuf) - len)) <= 0) {
-			if (n < 0 && errno == EINTR)
-				continue;
+		if ((n = read(cfd, recvbuf + len, sizeof(recvbuf) - len)) < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
 			break;
-		}
 		len += (size_t)n;
 	}
 	close(cfd);
-	if (len && len <= CLIP_MAX) {
-		h = fnv1a(recvbuf, len);
-		if (h != lasthash && androidfd >= 0) {
-			if (sendandroid(recvbuf, len) < 0)
-				disconnectandroid();
-			else
-				lasthash = h;
-		}
-	}
+	if (!len || len > CLIP_MAX)
+		return;
+	h = fnv1a(recvbuf, len);
+	if (h == lasthash || androidfd < 0)
+		return;
+	if (sendandroid(recvbuf, len) < 0)
+		disconnectandroid();
+	else
+		lasthash = h;
 }
 
 static void
@@ -609,19 +542,77 @@ rundaemon(const char *sockpath)
 	return 0;
 }
 
+static int
+runpush(const char *sockpath)
+{
+	struct sockaddr_un addr;
+	char buf[8192];
+	ssize_t n;
+	int fd, ret = 0;
+
+	if ((fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0)) < 0)
+		return -1;
+	memset(&addr, 0, sizeof(addr));
+	addr.sun_family = AF_UNIX;
+	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", sockpath);
+	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+		close(fd);
+		return -1;
+	}
+	for (;;) {
+		if ((n = read(0, buf, sizeof(buf))) < 0 && errno == EINTR)
+			continue;
+		if (n <= 0) {
+			if (n < 0)
+				ret = -1;
+			break;
+		}
+		if (writeall(fd, buf, (size_t)n) < 0) {
+			ret = -1;
+			break;
+		}
+	}
+	close(fd);
+	return ret;
+}
+
+static void
+usage(void)
+{
+	fprintf(stderr, "usage: %s [-p] [-v] [ip[:port]]\n", argv0);
+	exit(1);
+}
+
+static void
+parseaddr(char *arg)
+{
+	char *colon, *end;
+	long val;
+	int n;
+
+	n = snprintf(targetip, sizeof(targetip), "%s", arg);
+	if (n < 0 || (size_t)n >= sizeof(targetip))
+		usage();
+	if (!(colon = strchr(targetip, ':')))
+		return;
+	*colon = '\0';
+	errno = 0;
+	val = strtol(colon + 1, &end, 10);
+	if (errno || end == colon + 1 || *end || val <= 0 || val > 65535)
+		usage();
+	targetport = (int)val;
+}
+
 int
 main(int argc, char *argv[])
 {
-	struct sockaddr_un un;
 	const char *runtimedir;
-	char *colon, *end;
-	char sockpath[sizeof(un.sun_path)];
-	long val;
+	char sockpath[sizeof(((struct sockaddr_un *)0)->sun_path)];
 	int ch, n, push = 0;
 
 	if (argc && argv[0])
 		argv0 = argv[0];
-	while ((ch = getopt(argc, argv, "pv")) != -1) {
+	while ((ch = getopt(argc, argv, "pv")) >= 0) {
 		switch (ch) {
 		case 'p':
 			push = 1;
@@ -651,20 +642,8 @@ main(int argc, char *argv[])
 	}
 	if (argc > 1)
 		usage();
-
-	if (argc == 1) {
-		n = snprintf(targetip, sizeof(targetip), "%s", argv[0]);
-		if (n < 0 || (size_t)n >= sizeof(targetip))
-			usage();
-		if ((colon = strchr(targetip, ':'))) {
-			*colon = '\0';
-			errno = 0;
-			val = strtol(colon + 1, &end, 10);
-			if (errno || end == colon + 1 || *end || val <= 0 || val > 65535)
-				usage();
-			targetport = (int)val;
-		}
-	}
+	if (argc == 1)
+		parseaddr(argv[0]);
 
 	return rundaemon(sockpath);
 }
