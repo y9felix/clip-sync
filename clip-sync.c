@@ -222,7 +222,8 @@ startpaste(void)
 	args[4] = argv0;
 	args[5] = "-p";
 	args[6] = NULL;
-	pastepid = spawn(args);
+	if ((pastepid = spawn(args)) < 0)
+		pasteretry = monoms() + BACKOFF_INIT;
 }
 
 static void
@@ -306,6 +307,10 @@ connectandroid(void)
 		scrcpypushed = 1;
 		runcmd(fwdargs);
 		spawnscrcpy();
+		if (scrcpypid < 0) {
+			disconnectandroid();
+			return -1;
+		}
 		scrcpytries = 0;
 		androidretry = monoms() + 100;
 		return -1;
@@ -591,10 +596,12 @@ parseaddr(char *arg)
 	int n;
 
 	n = snprintf(targetip, sizeof(targetip), "%s", arg);
-	if (n < 0 || (size_t)n >= sizeof(targetip))
+	if (n < 0 || (size_t)n >= sizeof(targetip) || !*targetip)
 		usage();
 	if (!(colon = strchr(targetip, ':')))
 		return;
+	if (colon == targetip)
+		usage();
 	*colon = '\0';
 	errno = 0;
 	val = strtol(colon + 1, &end, 10);
